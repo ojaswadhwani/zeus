@@ -10,7 +10,7 @@ The alpha targets Linux x86-64 on local SSD storage and ships a source library w
 
 ## CI artifacts
 
-Run the **Embedded alpha checks** workflow manually to capture a 256 MiB hosted baseline under a 128 MiB cgroup limit with swap disabled. The job checks the memory limit, records the runner details and benchmark output in `baseline.txt`, and uploads them with the binary archive. The hosted baseline describes that runner. Use the deployment filesystem for release performance measurements.
+Run the **Embedded alpha checks** workflow manually or open a pull request from a branch in the same repository to capture a 256 MiB hosted baseline under a 128 MiB cgroup limit with swap disabled. The job checks the memory limit, records the runner details and benchmark output in `baseline.txt`, and uploads them with the binary archive. The hosted baseline describes that runner. Use the deployment filesystem for release performance measurements.
 
 A successful CI run uploads the Linux x86-64 archive and checks its `SHA256SUMS` file. After downloading and unpacking the workflow artifact, run `sha256sum -c SHA256SUMS` in that directory. CI artifacts are candidates until the release gates pass.
 
