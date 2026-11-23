@@ -1,0 +1,89 @@
+name: Embedded alpha checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: cargo test --locked --all-targets
+      - name: CLI and benchmark smoke tests
+        run: |
+          cargo build --locked --release --examples --bins
+          data=$(mktemp -d)
+          store="$data/store.wal"
+          target/release/zeus-local "$store" put checkpoint saved
+          test "$(target/release/zeus-local "$store" get checkpoint)" = saved
+          target/release/zeus-local "$store" compact
+          test "$(target/release/zeus-local "$store" get checkpoint)" = saved
+          target/release/zeus-local "$store" checkpoint "$data/checkpoint.table"
+          target/release/examples/baseline "$data/baseline.wal" 64 4096
+      - name: Disk-full recovery
+        run: |
+          data=$(mktemp -d)
+          sudo mount -t tmpfs -o size=2m,uid="$(id -u)",gid="$(id -g)" tmpfs "$data"
+          trap 'sudo umount "$data"; rmdir "$data"' EXIT
+          cli=target/release/zeus-local
+          store="$data/store.wal"
+          "$cli" "$store" put checkpoint saved
+          if dd if=/dev/zero of="$data/fill" bs=4096 status=none; then
+            exit 1
+          fi
+          value=$(head -c 16384 /dev/zero | tr '\000' x)
+          if "$cli" "$store" put rejected "$value"; then
+            exit 1
+          fi
+          if "$cli" "$store" compact; then
+            exit 1
+          fi
+          rm "$data/fill"
+          test "$("$cli" "$store" get checkpoint)" = saved
+          if "$cli" "$store" get rejected; then
+            exit 1
+          fi
+          "$cli" "$store" put retried ok
+          test "$("$cli" "$store" get retried)" = ok
+      - name: Larger than RAM baseline
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          data=$(mktemp -d)
+          trap 'rm -rf -- "$data"' EXIT
+          mkdir -p target/alpha
+          {
+            rustc --version
+            uname -srvmo
+            lscpu
+            findmnt -T "$data"
+            sudo systemd-run --quiet --scope -p MemoryMax=128M -p MemorySwapMax=0 \
+              sudo -u "$(id -un)" -- bash -euc '
+                group=$(cut -d: -f3 /proc/self/cgroup)
+                memory_max=$(cat "/sys/fs/cgroup$group/memory.max")
+                test "$memory_max" -eq 134217728
+                printf "memory_max_bytes=%s\n" "$memory_max"
+                exec /usr/bin/time -v "$1" "$2" 2048 131072
+              ' baseline "$PWD/target/release/examples/baseline" "$data/baseline.wal"
+          } 2>&1 | tee target/alpha/baseline.txt
+      - name: Package verified Linux build
+        run: |
+          mkdir -p target/alpha
+          archive=zeus-0.1.0-linux-x86_64.tar.gz
+          tar -czf "target/alpha/$archive" -C target/release zeus-local \
+            -C "$PWD" LICENSE README.md CHANGELOG.md
+          cd target/alpha
+          sha256sum "$archive" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zeus-0.1.0-linux-x86_64
+          path: target/alpha/
+          if-no-files-found: error
