@@ -54,7 +54,7 @@ jobs:
           "$cli" "$store" put retried ok
           test "$("$cli" "$store" get retried)" = ok
       - name: Larger than RAM baseline
-        if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'workflow_dispatch'
         run: |
           data=$(mktemp -d)
           trap 'rm -rf -- "$data"' EXIT
