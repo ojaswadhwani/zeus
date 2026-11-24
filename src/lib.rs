@@ -37,6 +37,14 @@ pub struct Store {
     write_failed: bool,
 }
 
+impl Drop for Store {
+    fn drop(&mut self) {
+        // A concurrent fork can retain this file description until exec closes it.
+        // Release the lock now so another open can proceed as soon as the store drops.
+        let _ = self.log.unlock();
+    }
+}
+
 impl Store {
     /// Open or create a log inside an existing operator-controlled directory.
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
