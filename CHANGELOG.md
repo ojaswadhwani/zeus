@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 alpha (unreleased)
+## 0.1.0 alpha (2026-11-25)
 
 - Embedded Rust library with durable puts and deletes, atomic write batches, and ordered scans.
 - Disk-backed values, an in-memory key index, and manual compaction into a sorted base with a write-ahead log tail.

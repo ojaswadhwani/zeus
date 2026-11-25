@@ -34,4 +34,4 @@ The program reports throughput, sampled p50 and p99 latency, process RSS and hig
 
 ## Evidence status
 
-The verification steps and benchmark are prepared. Build, CI, full-size benchmark results, and a public tag are pending.
+The release candidate at `28b32395e5bcc82155a8e28181630222a4c0a52c` passed the [Linux checks](https://github.com/ojaswadhwani/zeus/actions/runs/45390781462), including the release build and disk-full recovery. The [hosted baseline](https://github.com/ojaswadhwani/zeus/actions/runs/45389192018) passed on the same code before the security reporting documentation update. The 16 GiB deployment baseline ran on ext4 over NVMe. The release assets contain both benchmark logs and the Linux archive checksum.
