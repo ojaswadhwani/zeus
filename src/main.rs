@@ -17,6 +17,7 @@ fn main() -> ExitCode {
 
 fn run(args: &[OsString]) -> io::Result<ExitCode> {
     match args {
+        [flag] if flag == "--version" => println!("zeus-local {}", env!("CARGO_PKG_VERSION")),
         [path, command, key, value] if command == "put" => {
             Store::open(path)?.put(key.as_bytes(), value.as_bytes())?;
         }
@@ -40,7 +41,9 @@ fn run(args: &[OsString]) -> io::Result<ExitCode> {
             Store::open(path)?.checkpoint(destination)?;
         }
         _ => {
-            eprintln!("Usage: zeus-local LOG put KEY VALUE | zeus-local LOG get KEY | zeus-local LOG delete KEY | zeus-local LOG compact | zeus-local LOG checkpoint TABLE");
+            eprintln!(
+                "Usage: zeus-local LOG put KEY VALUE | zeus-local LOG get KEY | zeus-local LOG delete KEY | zeus-local LOG compact | zeus-local LOG checkpoint TABLE"
+            );
             return Ok(ExitCode::from(2));
         }
     }

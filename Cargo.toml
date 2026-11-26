@@ -1,10 +1,30 @@
 [package]
 name = "zeus"
-version = "0.1.0"
+version = "0.2.0-preview"
 edition = "2024"
 license = "MIT"
 rust-version = "1.89"
 
+[features]
+replication = ["dep:protobuf", "dep:raft", "dep:slog", "dep:rustls", "dep:rustls-pemfile"]
+
+[dependencies]
+protobuf = { version = "2.28", optional = true }
+raft = { version = "0.7", default-features = false, features = ["protobuf-codec"], optional = true }
+slog = { version = "2", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
+rustls-pemfile = { version = "2", optional = true }
+
+[dev-dependencies]
+protobuf = "2.28"
+raft = { version = "0.7", default-features = false, features = ["protobuf-codec"] }
+slog = "2"
+
 [[bin]]
 name = "zeus-local"
 path = "src/main.rs"
+
+[[bin]]
+name = "zeus-node"
+path = "src/node/main.rs"
+required-features = ["replication"]

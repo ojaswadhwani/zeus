@@ -76,7 +76,9 @@ jobs:
       - name: Package verified Linux build
         run: |
           mkdir -p target/alpha
-          archive=zeus-0.1.0-linux-x86_64.tar.gz
+          package_id=$(cargo pkgid --locked)
+          version=${package_id##*[@#]}
+          archive=zeus-$version-embedded-linux-x86_64.tar.gz
           tar -czf "target/alpha/$archive" -C target/release zeus-local \
             -C "$PWD" LICENSE README.md CHANGELOG.md
           cd target/alpha
@@ -84,6 +86,6 @@ jobs:
           sha256sum -c SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zeus-0.1.0-linux-x86_64
+          name: zeus-embedded-linux-x86_64
           path: target/alpha/
           if-no-files-found: error

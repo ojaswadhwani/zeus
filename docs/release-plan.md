@@ -13,9 +13,14 @@
 
 Sharding, cross-key transactions beyond atomic batches, SQL, and multi-region replication are later decisions. Each replica stores the full dataset in the initial cluster design.
 
+The [replicated preview contract](adr/0006-replication-contract.md) defines the 0.2 client guarantees and failure cases for the acceptance suite.
+
 ## Performance and release evidence
 
 The [0.1 alpha checklist](alpha-release.md) records the release gates and benchmark commands.
+
+The [0.2 preview verification](replicated-preview-verification.md) records the clean-copy quickstart, functional tests, and local failover and catch-up timings.
+The [0.2 packaging checklist](replicated-preview-release.md) describes the archive, checksum, and prerelease gates.
 
 Publish hardware, operating system, Rust version, dataset size, key and value sizes, concurrency, and durability settings with each benchmark. Include sustained read, write, and mixed workloads with a dataset larger than RAM. Record throughput, p50 and p99 latency, idle and peak RSS, write amplification, and restart time. For clustered releases, also measure failover time and follower catch-up. Set regression budgets from the alpha baseline before using them as release gates.
 

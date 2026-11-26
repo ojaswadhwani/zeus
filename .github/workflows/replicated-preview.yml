@@ -1,0 +1,64 @@
+name: Replicated preview package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*-preview'
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Check preview version
+        run: |
+          package_id=$(cargo pkgid --locked)
+          version=${package_id##*[@#]}
+          [[ "$version" == *-preview ]]
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "v$version"
+          fi
+      - name: Run release tests
+        run: cargo test --locked --release --all-features --all-targets
+      - name: Build archive and checksums
+        run: bash scripts/package-preview.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zeus-replicated-preview-linux-x86_64
+          path: target/preview/
+          if-no-files-found: error
+
+  publish:
+    if: github.ref == 'refs/tags/v0.2.0-preview'
+    needs: linux
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Verify and publish the prerelease archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" \
+            --name zeus-replicated-preview-linux-x86_64 --dir dist
+          (
+            cd dist
+            sha256sum -c SHA256SUMS
+            archive="zeus-${GITHUB_REF_NAME#v}-linux-x86_64"
+            tar -xzf "$archive.tar.gz"
+            test "$("./$archive/zeus-node" --version)" = "zeus-node ${GITHUB_REF_NAME#v}"
+            test "$("./$archive/zeus-local" --version)" = "zeus-local ${GITHUB_REF_NAME#v}"
+          )
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
+            --verify-tag --prerelease --latest=false \
+            --title "Zeus ${GITHUB_REF_NAME#v}" \
+            --notes-file docs/replicated-preview-notes.md

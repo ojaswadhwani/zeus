@@ -3,6 +3,7 @@
 Zeus is a planned open-source, durable ordered key-value storage engine written in Rust. The proposed design uses one storage core for an embedded library and a lightweight replicated server. The first target is application state that fits on one node's disk and needs to remain available through a single node failure.
 
 - [Release plan](docs/release-plan.md) covers scope, release gates, and documentation.
+- [Replication quickstart](docs/replication-quickstart.md) starts the experimental three-node server.
 - [Security and AI direction](docs/security-and-ai.md) covers trust boundaries, secure defaults, and integration priorities.
 
 The 0.1 alpha candidate provides a local engine with durable writes, atomic batches, ordered reads, compaction, and checkpoint export. See the [alpha release checklist](docs/alpha-release.md) for verification and benchmark steps.

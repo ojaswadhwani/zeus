@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0-preview (2026-11-27)
+
+- Added the opt-in `zeus-node` server with three fixed voters, automatic elections, mutually authenticated peer connections, and quorum-durable writes.
+- Added point reads and bounded scans with linearizable semantics, atomic put/delete batches, and retries scoped to the client certificate and sequence number.
+- Added durable snapshot installation, Raft log compaction, and catch-up over mutual TLS. Snapshot images are capped at 16 MiB. Above that cap, new snapshots and compaction pause.
+- The replicated preview targets Linux x86-64 with fresh data directories. The embedded 0.1 database has no in-place migration to a replicated cluster.
+- See the [three-node quickstart](docs/replication-quickstart.md) and [candidate verification results](docs/replicated-preview-verification.md).
+
 ## 0.1.0 alpha (2026-11-25)
 
 - Embedded Rust library with durable puts and deletes, atomic write batches, and ordered scans.
