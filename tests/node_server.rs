@@ -646,7 +646,13 @@ fn offline_rotation_replaces_the_ca_and_voter_credentials() {
             .unwrap();
         assert_eq!(output.status.code(), Some(1));
         let error = String::from_utf8_lossy(&output.stderr);
-        assert!(error.starts_with("received fatal alert:"), "{error}");
+        // The server can close the socket before the client reads the TLS alert.
+        assert!(
+            error.starts_with("received fatal alert:")
+                || error.starts_with("Broken pipe")
+                || error.starts_with("Connection reset by peer"),
+            "{error}"
+        );
         assert!(output.stdout.is_empty());
     }
     let write = call(&replacement, address, "put", &["1", "kept", "new"]);

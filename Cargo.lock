@@ -535,7 +535,7 @@ checksum = "85ccff8a4805aba1eaa4cd4afcd49f7557dd2cf5fd79ffc37f8959466effc5aa"
 
 [[package]]
 name = "zeus"
-version = "0.3.0-beta.1"
+version = "0.3.0-beta.2"
 dependencies = [
  "protobuf",
  "raft",

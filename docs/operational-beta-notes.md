@@ -1,4 +1,4 @@
-# Zeus 0.3.0-beta.1
+# Zeus 0.3.0-beta.2
 
 The operational beta targets small three-voter clusters on Linux x86-64. The archive contains the replicated `zeus-node` server, the embedded `zeus-local` CLI, a Rust dependency inventory, and the operator documentation.
 
@@ -11,7 +11,7 @@ The snapshot image and restore are limited to 16 MiB including metadata. Snapsho
 
 The release workflow runs the optimized tests and rehearses the preview upgrade and rollback using the extracted server. It verifies the archive and signed build provenance before publishing.
 
-- [Verify the package](https://github.com/ojaswadhwani/zeus/blob/v0.3.0-beta.1/docs/operational-beta-release.md)
-- [Upgrade and roll back](https://github.com/ojaswadhwani/zeus/blob/v0.3.0-beta.1/docs/operational-beta-upgrade.md)
-- [Back up and restore](https://github.com/ojaswadhwani/zeus/blob/v0.3.0-beta.1/docs/backup-restore.md)
-- [Rotate certificates](https://github.com/ojaswadhwani/zeus/blob/v0.3.0-beta.1/docs/certificate-rotation.md)
+- [Verify the package](https://github.com/ojaswadhwani/zeus/blob/v0.3.0-beta.2/docs/operational-beta-release.md)
+- [Upgrade and roll back](https://github.com/ojaswadhwani/zeus/blob/v0.3.0-beta.2/docs/operational-beta-upgrade.md)
+- [Back up and restore](https://github.com/ojaswadhwani/zeus/blob/v0.3.0-beta.2/docs/backup-restore.md)
+- [Rotate certificates](https://github.com/ojaswadhwani/zeus/blob/v0.3.0-beta.2/docs/certificate-rotation.md)

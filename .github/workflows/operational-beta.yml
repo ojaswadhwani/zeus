@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - 'v0.3.0-beta.1'
+      - 'v0.3.0-beta.2'
 
 permissions:
   contents: read
@@ -25,7 +25,7 @@ jobs:
         run: |
           package_id=$(cargo pkgid --locked)
           version=${package_id##*[@#]}
-          test "$version" = "0.3.0-beta.1"
+          test "$version" = "0.3.0-beta.2"
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             test "$GITHUB_REF_NAME" = "v$version"
           fi
@@ -34,7 +34,7 @@ jobs:
       - name: Build and check the Linux package
         run: |
           bash scripts/package-linux.sh beta
-          bash scripts/verify-linux-beta.sh target/beta 0.3.0-beta.1 "$RUNNER_TEMP/zeus-beta"
+          bash scripts/verify-linux-beta.sh target/beta 0.3.0-beta.2 "$RUNNER_TEMP/zeus-beta"
       - name: Rehearse the upgrade with the extracted package
         run: |
           preview_source=$(mktemp -d)
@@ -42,14 +42,14 @@ jobs:
           cargo build --locked --release --features replication --bin zeus-node \
             --manifest-path "$preview_source/Cargo.toml" --target-dir "$RUNNER_TEMP/zeus-preview"
           export ZEUS_PREVIEW_BIN="$RUNNER_TEMP/zeus-preview/release/zeus-node"
-          export ZEUS_CANDIDATE_BIN="$RUNNER_TEMP/zeus-beta/zeus-0.3.0-beta.1-linux-x86_64/zeus-node"
+          export ZEUS_CANDIDATE_BIN="$RUNNER_TEMP/zeus-beta/zeus-0.3.0-beta.2-linux-x86_64/zeus-node"
           cargo test --locked --release --features replication --test node_server \
             offline_preview_upgrade_preserves_state_and_allows_prewrite_rollback -- --ignored
       - name: Sign build provenance for the release archive
-        if: github.ref == 'refs/tags/v0.3.0-beta.1'
+        if: github.ref == 'refs/tags/v0.3.0-beta.2'
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
-          subject-path: target/beta/zeus-0.3.0-beta.1-linux-x86_64.tar.gz
+          subject-path: target/beta/zeus-0.3.0-beta.2-linux-x86_64.tar.gz
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: zeus-operational-beta-linux-x86_64
@@ -57,7 +57,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: github.ref == 'refs/tags/v0.3.0-beta.1'
+    if: github.ref == 'refs/tags/v0.3.0-beta.2'
     needs: linux
     runs-on: ubuntu-24.04
     permissions:

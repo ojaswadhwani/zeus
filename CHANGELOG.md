@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0-beta.1
+## 0.3.0-beta.2
 
 - Added offline backup of a stopped replicated voter and restore into a fresh three-voter cluster. Restores preserve key-value data and certificate-scoped retry records. See the [backup and restore procedure](docs/backup-restore.md).
 - Added authenticated liveness and quorum-backed readiness checks, plus per-voter Raft progress and snapshot metrics.
