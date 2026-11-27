@@ -240,9 +240,19 @@ fn spawn_voter(root: &Path, addresses: &[String; 3], index: usize) -> Voter {
 }
 
 fn spawn_with_routes(root: &Path, listen: &str, routes: &[String; 3], index: usize) -> Voter {
+    spawn_node(Path::new(BIN), root, listen, routes, index)
+}
+
+fn spawn_node(
+    binary: &Path,
+    root: &Path,
+    listen: &str,
+    routes: &[String; 3],
+    index: usize,
+) -> Voter {
     let id = index + 1;
     let name = format!("node{id}");
-    let mut command = Command::new(BIN);
+    let mut command = Command::new(binary);
     command.current_dir(root).args([
         "serve",
         &id.to_string(),
@@ -259,6 +269,128 @@ fn spawn_with_routes(root: &Path, listen: &str, routes: &[String; 3], index: usi
         }
     }
     Voter(command.stdin(Stdio::null()).spawn().unwrap())
+}
+
+#[test]
+#[ignore = "requires ZEUS_PREVIEW_BIN pointing to the v0.2.0-preview zeus-node binary"]
+fn offline_preview_upgrade_preserves_state_and_allows_prewrite_rollback() {
+    let preview =
+        PathBuf::from(std::env::var_os("ZEUS_PREVIEW_BIN").expect("set ZEUS_PREVIEW_BIN"))
+            .canonicalize()
+            .unwrap();
+    let version = Command::new(&preview).arg("--version").output().unwrap();
+    assert!(version.status.success());
+    assert_eq!(version.stdout, b"zeus-node 0.2.0-preview\n");
+    let candidate =
+        PathBuf::from(std::env::var_os("ZEUS_CANDIDATE_BIN").unwrap_or_else(|| BIN.into()))
+            .canonicalize()
+            .unwrap();
+    let root = std::env::temp_dir().join(format!("zeus-upgrade-test-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let dir = TestDir(root);
+    issue_credentials(&dir.0);
+    for id in 1..=3 {
+        fs::create_dir(dir.0.join(format!("node{id}"))).unwrap();
+    }
+    let reserved = [(); 3].map(|()| TcpListener::bind("127.0.0.1:0").unwrap());
+    let addresses = reserved
+        .each_ref()
+        .map(|socket| socket.local_addr().unwrap().to_string());
+    drop(reserved);
+    let start = |binary: &Path, root: &Path| {
+        [0, 1, 2].map(|index| {
+            Some(spawn_node(
+                binary,
+                root,
+                &addresses[index],
+                &addresses,
+                index,
+            ))
+        })
+    };
+    let mut voters = start(&preview, &dir.0);
+    let leader = find_leader(&dir.0, &addresses, &mut voters);
+    let address = &addresses[leader];
+    for sequence in 1..=33 {
+        let write = call(
+            &dir.0,
+            address,
+            "put",
+            &[&sequence.to_string(), "deleted", "old"],
+        );
+        assert_eq!(write.stdout, b"OK\n", "{:?}", write.stderr);
+    }
+    let batch = ["34", "delete", "deleted", "put", "kept", "original"];
+    assert_eq!(call(&dir.0, address, "batch", &batch).stdout, b"OK\n");
+    let write = call_as(
+        &dir.0,
+        address,
+        "other-client",
+        "put",
+        &["1", "kept", "after-batch"],
+    );
+    assert_eq!(write.stdout, b"OK\n");
+    for id in 1..=3 {
+        let voter = dir.0.join(format!("node{id}"));
+        wait_for_file_bytes(&voter.join(format!("{id}.data")), b"after-batch");
+        wait_for_file_bytes(&voter.join(format!("{id}.raft")), b"snapshot-image");
+    }
+    drop(voters);
+
+    let rollback = dir.0.join("rollback");
+    fs::create_dir(&rollback).unwrap();
+    for name in ["ca.pem", "client.pem", "client.key"] {
+        fs::copy(dir.0.join(name), rollback.join(name)).unwrap();
+    }
+    for id in 1..=3 {
+        for extension in ["pem", "key"] {
+            let name = format!("node{id}.{extension}");
+            fs::copy(dir.0.join(&name), rollback.join(&name)).unwrap();
+        }
+        let name = format!("node{id}");
+        let copy = rollback.join(&name);
+        fs::create_dir(&copy).unwrap();
+        for file in fs::read_dir(dir.0.join(name)).unwrap() {
+            let file = file.unwrap();
+            fs::copy(file.path(), copy.join(file.file_name())).unwrap();
+        }
+    }
+    let verify_source_state = |root: &Path, address: &str| {
+        assert_eq!(
+            call(root, address, "get", &["kept"]).stdout,
+            b"after-batch\n"
+        );
+        assert_eq!(
+            call(root, address, "get", &["deleted"]).stderr,
+            b"MISSING\n"
+        );
+    };
+
+    let mut voters = start(&candidate, &dir.0);
+    let leader = find_leader(&dir.0, &addresses, &mut voters);
+    assert_eq!(
+        call(&dir.0, &addresses[leader], "ready", &[]).stdout,
+        b"OK\n"
+    );
+    verify_source_state(&dir.0, &addresses[leader]);
+    drop(voters);
+
+    let mut voters = start(&preview, &rollback);
+    let leader = find_leader(&rollback, &addresses, &mut voters);
+    verify_source_state(&rollback, &addresses[leader]);
+    drop(voters);
+
+    let mut voters = start(&candidate, &dir.0);
+    let leader = find_leader(&dir.0, &addresses, &mut voters);
+    let address = &addresses[leader];
+    assert_eq!(call(&dir.0, address, "batch", &batch).stdout, b"OK\n");
+    verify_source_state(&dir.0, address);
+    let write = call(&dir.0, address, "put", &["35", "kept", "after-upgrade"]);
+    assert_eq!(write.stdout, b"OK\n");
+    assert_eq!(
+        call(&dir.0, address, "get", &["kept"]).stdout,
+        b"after-upgrade\n"
+    );
 }
 
 fn interrupt_snapshot(root: &Path, address: &str, leader: usize, follower: usize) {
@@ -345,6 +477,187 @@ fn signal(voter: &Voter, name: &str) {
 }
 
 #[test]
+fn offline_backup_restores_a_fresh_three_node_cluster() {
+    let root = std::env::temp_dir().join(format!("zeus-backup-test-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let dir = TestDir(root);
+    issue_credentials(&dir.0);
+    let reserved = [(); 3].map(|()| TcpListener::bind("127.0.0.1:0").unwrap());
+    let addresses = reserved
+        .each_ref()
+        .map(|socket| socket.local_addr().unwrap().to_string());
+    drop(reserved);
+    let cli = |args: &[&str]| {
+        Command::new(BIN)
+            .current_dir(&dir.0)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let ok = |output: Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let mut voters = [0, 1, 2].map(|index| {
+        fs::create_dir(dir.0.join(format!("node{}", index + 1))).unwrap();
+        Some(spawn_voter(&dir.0, &addresses, index))
+    });
+    let leader = find_leader(&dir.0, &addresses, &mut voters);
+    let batch = ["1", "put", "kept", "original", "put", "removed", "value"];
+    ok(call(&dir.0, &addresses[leader], "batch", &batch));
+    let batch = ["2", "delete", "removed", "put", "kept", "saved"];
+    ok(call(&dir.0, &addresses[leader], "batch", &batch));
+    let id = (leader + 1).to_string();
+    let name = format!("node{id}");
+    let backup = ["backup", &id, &name, "backup.table"];
+    assert!(!cli(&backup).status.success());
+    drop(voters);
+    ok(cli(&backup));
+    assert!(!cli(&backup).status.success());
+
+    let mut corrupt = fs::read(dir.0.join("backup.table")).unwrap();
+    *corrupt.last_mut().unwrap() ^= 1;
+    fs::write(dir.0.join("corrupt.table"), corrupt).unwrap();
+    for index in 0..3 {
+        let id = (index + 1).to_string();
+        let name = format!("node{id}");
+        fs::rename(dir.0.join(&name), dir.0.join(format!("original-{name}"))).unwrap();
+        fs::create_dir(dir.0.join(&name)).unwrap();
+        let mut restore = [
+            "restore",
+            &id,
+            &name,
+            "corrupt.table",
+            "node1.pem",
+            "node2.pem",
+            "node3.pem",
+        ];
+        assert!(!cli(&restore).status.success());
+        assert_eq!(fs::read_dir(dir.0.join(&name)).unwrap().count(), 0);
+        restore[3] = "backup.table";
+        ok(cli(&restore));
+        assert!(!cli(&restore).status.success());
+    }
+    let mut voters = [0, 1, 2].map(|index| Some(spawn_voter(&dir.0, &addresses, index)));
+    let leader = find_leader(&dir.0, &addresses, &mut voters);
+    let address = &addresses[leader];
+    let saved = call(&dir.0, address, "get", &["kept"]);
+    assert_eq!(saved.stdout, b"saved\n");
+    let removed = call(&dir.0, address, "get", &["removed"]);
+    assert_eq!(removed.stderr, b"MISSING\n");
+    ok(call(&dir.0, address, "batch", &batch));
+    ok(call(&dir.0, address, "put", &["3", "kept", "new"]));
+    let new = call(&dir.0, address, "get", &["kept"]);
+    assert_eq!(new.stdout, b"new\n");
+}
+
+#[test]
+fn offline_rotation_replaces_the_ca_and_voter_credentials() {
+    let root = std::env::temp_dir().join(format!("zeus-rotation-test-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let dir = TestDir(root);
+    let old = dir.0.join("old");
+    let replacement = dir.0.join("replacement");
+    for root in [&old, &replacement] {
+        fs::create_dir(root).unwrap();
+        issue_credentials(root);
+        for id in 1..=3 {
+            fs::create_dir(root.join(format!("node{id}"))).unwrap();
+        }
+    }
+    let reserved = [(); 3].map(|()| TcpListener::bind("127.0.0.1:0").unwrap());
+    let addresses = reserved
+        .each_ref()
+        .map(|socket| socket.local_addr().unwrap().to_string());
+    drop(reserved);
+    let mut voters = [0, 1, 2].map(|index| Some(spawn_voter(&old, &addresses, index)));
+    let leader = find_leader(&old, &addresses, &mut voters);
+    let address = &addresses[leader];
+    let seed = call(
+        &old,
+        address,
+        "batch",
+        &["1", "put", "kept", "saved", "put", "removed", "old"],
+    );
+    assert_eq!(seed.stdout, b"OK\n");
+    let delete = call(&old, address, "batch", &["2", "delete", "removed"]);
+    assert_eq!(delete.stdout, b"OK\n");
+    let saved = call(&old, address, "get", &["kept"]);
+    assert_eq!(saved.stdout, b"saved\n");
+    drop(voters);
+
+    let id = (leader + 1).to_string();
+    let backup = replacement.join("backup.table");
+    let output = Command::new(BIN)
+        .current_dir(&old)
+        .args(["backup", &id, &format!("node{id}")])
+        .arg(&backup)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for id in 1..=3 {
+        let output = Command::new(BIN)
+            .current_dir(&replacement)
+            .args([
+                "restore",
+                &id.to_string(),
+                &format!("node{id}"),
+                "backup.table",
+                "node1.pem",
+                "node2.pem",
+                "node3.pem",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut voters = [0, 1, 2].map(|index| Some(spawn_voter(&replacement, &addresses, index)));
+    let leader = find_leader(&replacement, &addresses, &mut voters);
+    let address = &addresses[leader];
+    assert_eq!(call(&replacement, address, "ready", &[]).stdout, b"OK\n");
+    assert_eq!(
+        call(&replacement, address, "get", &["kept"]).stdout,
+        b"saved\n"
+    );
+    assert_eq!(
+        call(&replacement, address, "get", &["removed"]).stderr,
+        b"MISSING\n"
+    );
+
+    for retired in ["node1", "client"] {
+        // Trust the new server to check rejection by the server's client verifier.
+        let output = Command::new(BIN)
+            .current_dir(&replacement)
+            .args(["live", address, "ca.pem"])
+            .arg(old.join(format!("{retired}.pem")))
+            .arg(old.join(format!("{retired}.key")))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.starts_with("received fatal alert:"), "{error}");
+        assert!(output.stdout.is_empty());
+    }
+    let write = call(&replacement, address, "put", &["1", "kept", "new"]);
+    assert_eq!(write.stdout, b"OK\n");
+    assert_eq!(
+        call(&replacement, address, "get", &["kept"]).stdout,
+        b"new\n"
+    );
+}
+
+#[test]
 fn authenticated_three_node_cluster_elects_replacement_after_sigkill() {
     let root = std::env::temp_dir().join(format!("zeus-node-test-{}", std::process::id()));
     fs::create_dir(&root).unwrap();
@@ -427,6 +740,15 @@ fn authenticated_three_node_cluster_elects_replacement_after_sigkill() {
             String::from_utf8_lossy(&write.stderr)
         );
     }
+    let metrics = call(&dir.0, &addresses[leader], "metrics", &[]);
+    assert!(metrics.status.success());
+    let metrics = String::from_utf8(metrics.stdout).unwrap();
+    assert!(metrics.lines().any(|line| line == "snapshot_index=32"));
+    assert!(
+        metrics
+            .lines()
+            .any(|line| line == "snapshot_limit_blocked=0")
+    );
     signal(voters[leader].as_ref().unwrap(), "-STOP");
     voters[follower] = Some(spawn_voter(&dir.0, &addresses, follower));
     interrupt_snapshot(&dir.0, &addresses[follower], leader, follower);
@@ -720,6 +1042,13 @@ fn partitioned_cluster_rejects_minority_and_repairs_conflicting_suffix() {
 
     let isolated = voters[old].take().unwrap();
     let replacement = find_leader(&dir.0, &addresses, &mut voters);
+    let ready = call(&dir.0, &addresses[replacement], "ready", &[]);
+    assert!(ready.status.success());
+    assert_eq!(ready.stdout, b"OK\n");
+    let live = call(&dir.0, &addresses[old], "live", &[]);
+    assert!(live.status.success());
+    assert_eq!(live.stdout, b"OK\n");
+    assert_minority_request_rejected(&dir.0, &addresses[old], "ready", &[]);
     let majority_value = "majority-committed-value";
     let committed = call_as(
         &dir.0,
@@ -739,6 +1068,27 @@ fn partitioned_cluster_rejects_minority_and_repairs_conflicting_suffix() {
         read.stdout.strip_suffix(b"\n"),
         Some(majority_value.as_bytes())
     );
+    let index = |voter: usize, field: &str| {
+        let output = call(&dir.0, &addresses[voter], "metrics", &[]);
+        assert!(output.status.success());
+        let metrics = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            metrics
+                .lines()
+                .any(|line| line == format!("voter_id={}", voter + 1))
+        );
+        metrics
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .find(|(key, _)| *key == field)
+            .unwrap()
+            .1
+            .parse::<u64>()
+            .unwrap()
+    };
+    let applied = index(replacement, "applied_index");
+    assert_eq!(index(replacement, "commit_index"), applied);
+    assert!(index(old, "applied_index") < applied);
     assert_minority_request_rejected(&dir.0, &addresses[old], "get", &["partition-key"]);
     assert_minority_request_rejected(
         &dir.0,

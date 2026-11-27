@@ -10,7 +10,7 @@ use client_wire::{
     MAX_BATCH_BYTES, MAX_BATCH_OPERATIONS, MAX_KEY, MAX_SCAN_ROWS, MAX_VALUE, push_field,
     take_field,
 };
-use replication::MEMBERS;
+use replication::{MEMBERS, backup};
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
@@ -21,6 +21,9 @@ use transport::{
 };
 
 const USAGE: &str = "zeus-node serve ID DATA_DIR LISTEN CA CERT KEY PEER PEER
+zeus-node backup ID DATA_DIR BACKUP_FILE
+zeus-node restore ID DATA_DIR BACKUP_FILE VOTER1_CERT VOTER2_CERT VOTER3_CERT
+zeus-node {live|ready|metrics} ADDRESS CA CERT KEY
 zeus-node get ADDRESS CA CERT KEY NAME
 zeus-node put ADDRESS CA CERT KEY SEQUENCE NAME VALUE
 zeus-node batch ADDRESS CA CERT KEY SEQUENCE {put NAME VALUE | delete NAME}...
@@ -42,6 +45,33 @@ fn main() -> ExitCode {
 fn run(args: Vec<String>) -> Result<bool> {
     let args: Vec<_> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
+        ["backup", id, data, destination] => {
+            backup::create(id.parse()?, Path::new(data), Path::new(destination))?;
+            Ok(true)
+        }
+        ["restore", id, data, source, first, second, third] => {
+            let first = certificates(first)?.remove(0);
+            let second = certificates(second)?.remove(0);
+            let third = certificates(third)?.remove(0);
+            let cluster =
+                backup::cluster_identity([&first, &second, &third].map(|cert| cert.as_ref()))?;
+            backup::restore(id.parse()?, Path::new(data), Path::new(source), &cluster)?;
+            Ok(true)
+        }
+        [
+            operation @ ("live" | "ready" | "metrics"),
+            address,
+            ca,
+            cert,
+            key,
+        ] => {
+            let request: &[u8] = match *operation {
+                "live" => b"CL",
+                "ready" => b"CR",
+                _ => b"CM",
+            };
+            call(address, ca, cert, key, request)
+        }
         ["serve", id, data, listen, ca, cert, key, first, second] => {
             let id = id.parse()?;
             let address = listen.parse()?;
@@ -176,6 +206,12 @@ fn call(address: &str, ca: &str, cert: &str, key: &str, request: &[u8]) -> Resul
     let mut stream = connect(address.parse()?, Arc::new(config), NETWORK_TIMEOUT, None)?;
     write_frame(&mut stream, request)?;
     let reply = read_frame(&mut stream)?;
+    if request == b"CM" {
+        if let Some(metrics) = reply.strip_prefix(b"METRICS ") {
+            io::stdout().write_all(metrics)?;
+            return Ok(true);
+        }
+    }
     if let Some(value) = reply.strip_prefix(b"VALUE ") {
         io::stdout().write_all(value)?;
         io::stdout().write_all(b"\n")?;

@@ -114,7 +114,7 @@ impl RaftStorage {
         self.memory.wl()
     }
 
-    pub(super) fn snapshot_index(&self) -> u64 {
+    pub(crate) fn snapshot_index(&self) -> u64 {
         self.image.get_metadata().index
     }
 }
@@ -157,11 +157,18 @@ impl Storage for RaftStorage {
 }
 
 pub(super) fn export(data: &Store, cluster: &[u8]) -> io::Result<Option<Vec<u8>>> {
-    let mut image = MAGIC.to_vec();
-    append_field(&mut image, cluster);
     // The replicated store reserves these prefixes and keeps the applied index
     // in its own key, so the range includes all state-machine records.
-    for entry in data.scan(APPLIED_INDEX, b"retry0") {
+    encode(data.scan(APPLIED_INDEX, b"retry0"), cluster)
+}
+
+pub(super) fn encode<'a>(
+    rows: impl Iterator<Item = io::Result<(&'a [u8], Vec<u8>)>>,
+    cluster: &[u8],
+) -> io::Result<Option<Vec<u8>>> {
+    let mut image = MAGIC.to_vec();
+    append_field(&mut image, cluster);
+    for entry in rows {
         let (key, value) = entry?;
         if image.len() + 8 + key.len() + value.len() > MAX_SNAPSHOT_IMAGE {
             return Ok(None);

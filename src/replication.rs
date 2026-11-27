@@ -9,6 +9,10 @@ use zeus::{BatchOp, Store};
 mod snapshot;
 use snapshot::RaftStorage;
 
+#[cfg_attr(test, allow(dead_code))]
+#[path = "replication/backup.rs"]
+pub(crate) mod backup;
+
 pub(crate) const MEMBERS: [u64; 3] = [1, 2, 3];
 pub(crate) const LAST_INDEX: &[u8] = b"last-index";
 pub(crate) const APPLIED_INDEX: &[u8] = b"applied-index";
@@ -29,6 +33,7 @@ pub(crate) struct Node {
     data_path: PathBuf,
     cluster: Vec<u8>,
     snapshot_attempt: u64,
+    pub(crate) snapshot_limit_blocked: bool,
 }
 
 pub(crate) struct PendingRead {
@@ -40,6 +45,7 @@ pub(crate) struct PendingRead {
 }
 
 enum ReadQuery {
+    Barrier,
     Point(Vec<u8>),
     Scan {
         start: Vec<u8>,
@@ -53,6 +59,7 @@ enum ReadQuery {
 pub(crate) enum ReadReply {
     Pending,
     NotLeader,
+    Confirmed,
     Value(Option<Vec<u8>>),
     Rows {
         rows: Vec<(Vec<u8>, Vec<u8>)>,
@@ -105,6 +112,7 @@ impl Node {
             data_path,
             cluster,
             snapshot_attempt: index,
+            snapshot_limit_blocked: false,
         }
     }
 
@@ -157,6 +165,7 @@ impl Node {
             snapshot::prune(&self.data_path, image).unwrap();
             self.unapplied.clear();
             self.snapshot_attempt = index;
+            self.snapshot_limit_blocked = false;
             *self.raft.mut_store() =
                 RaftStorage::new(image.clone(), ready.entries(), read_hard_state(&self.log));
             self.trim_log(index);
@@ -215,6 +224,7 @@ impl Node {
         }
         self.snapshot_attempt = index;
         let Some(data) = snapshot::export(&self.data, &self.cluster).unwrap() else {
+            self.snapshot_limit_blocked = true;
             return;
         };
         let storage = self.raft.store();
@@ -233,6 +243,7 @@ impl Node {
         let entries = read_entries(&self.log, index);
         *self.raft.mut_store() = RaftStorage::new(image, &entries, read_hard_state(&self.log));
         self.trim_log(index);
+        self.snapshot_limit_blocked = false;
     }
 
     pub(crate) fn valid_snapshot(&self, image: &Snapshot) -> bool {
@@ -333,6 +344,10 @@ impl Node {
         self.start_query(ReadQuery::Point(key.to_vec()))
     }
 
+    pub(crate) fn start_read_barrier(&mut self) -> ReadReply {
+        self.start_query(ReadQuery::Barrier)
+    }
+
     pub(crate) fn start_scan(
         &mut self,
         start: Vec<u8>,
@@ -393,6 +408,7 @@ impl Node {
         {
             let read = self.read.take().unwrap();
             return match read.query {
+                ReadQuery::Barrier => ReadReply::Confirmed,
                 ReadQuery::Point(key) => ReadReply::Value(self.data.get(&key).unwrap()),
                 ReadQuery::Scan {
                     start,

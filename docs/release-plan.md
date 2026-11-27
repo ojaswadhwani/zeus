@@ -22,6 +22,10 @@ The [0.1 alpha checklist](alpha-release.md) records the release gates and benchm
 The [0.2 preview verification](replicated-preview-verification.md) records the clean-copy quickstart, functional tests, and local failover and catch-up timings.
 The [0.2 packaging checklist](replicated-preview-release.md) describes the archive, checksum, and prerelease gates.
 
+The [certificate rotation procedure](certificate-rotation.md) covers the offline credential cutover for the operational beta.
+The [operational beta upgrade procedure](operational-beta-upgrade.md) covers the preview-to-beta upgrade and pre-write rollback rehearsal.
+The [operational beta packaging procedure](operational-beta-release.md) covers the archive, dependency inventory and signed provenance.
+
 Publish hardware, operating system, Rust version, dataset size, key and value sizes, concurrency, and durability settings with each benchmark. Include sustained read, write, and mixed workloads with a dataset larger than RAM. Record throughput, p50 and p99 latency, idle and peak RSS, write amplification, and restart time. For clustered releases, also measure failover time and follower catch-up. Set regression budgets from the alpha baseline before using them as release gates.
 
 Before the first public tag, choose and add an open-source license, pin the Rust toolchain, and document the build from a clean checkout. For every public tag, publish release notes with supported platforms, behavior and compatibility changes, known issues, verification results, and upgrade or restore instructions as applicable. Publish checksums for shipped binaries, and make signed provenance and a dependency inventory part of the beta gate. [SLSA build and provenance specification](https://slsa.dev/spec/v1.2/)

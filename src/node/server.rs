@@ -2,7 +2,7 @@ use super::client_wire::{
     MAX_BATCH_BYTES, MAX_BATCH_OPERATIONS, MAX_KEY, MAX_SCAN_BYTES, MAX_SCAN_ROWS, MAX_VALUE,
     push_field, take_field,
 };
-use super::replication::{MAX_SNAPSHOT_IMAGE, MEMBERS, Node, ReadReply, WriteReply};
+use super::replication::{MAX_SNAPSHOT_IMAGE, MEMBERS, Node, ReadReply, WriteReply, backup};
 use super::transport::{
     NETWORK_TIMEOUT, PEER_TIMEOUT, Peer, Result, connect, read_frame, read_snapshot, write_frame,
     write_snapshot,
@@ -65,15 +65,9 @@ pub(crate) fn serve(
     client_tls: ClientConfig,
 ) -> Result<()> {
     peers.sort_unstable_by_key(|peer| peer.id);
-    let mut cluster = Vec::new();
-    for peer in &peers {
-        let certificate = peer.certificate.as_ref();
-        if certificate.len() > 4096 {
-            return Err("peer leaf certificate exceeds 4096 bytes".into());
-        }
-        cluster.extend_from_slice(&(certificate.len() as u32).to_be_bytes());
-        cluster.extend_from_slice(certificate);
-    }
+    let cluster = backup::cluster_identity(
+        [&peers[0], &peers[1], &peers[2]].map(|peer| peer.certificate.as_ref()),
+    )?;
     let mut node = Node::open_with_config(
         root,
         Config {
@@ -134,6 +128,10 @@ pub(crate) fn serve(
             }) => {
                 if Instant::now() >= expires {
                     respond(reply, b"TIMEOUT".to_vec());
+                } else if request == b"L" {
+                    respond(reply, b"OK".to_vec());
+                } else if request == b"M" {
+                    respond(reply, metrics(&node));
                 } else if node.raft.raft.state != StateRole::Leader {
                     respond(reply, leader_hint(&node));
                 } else if active.is_some() {
@@ -237,6 +235,10 @@ fn start(
     };
 
     let result = match action {
+        b'R' if body.is_empty() => {
+            assert_eq!(node.start_read_barrier(), ReadReply::Pending);
+            return Ok(Pending::Read);
+        }
         b'G' => {
             let key = read_key(&mut body).ok_or(INVALID)?;
             if !body.is_empty() {
@@ -335,6 +337,7 @@ fn complete(node: &mut Node, client: &Client) -> Option<Vec<u8>> {
         Pending::Read => match node.poll_read() {
             ReadReply::Pending => None,
             ReadReply::NotLeader => Some(leader_hint(node)),
+            ReadReply::Confirmed => Some(b"OK".to_vec()),
             ReadReply::Value(None) => Some(b"MISSING".to_vec()),
             ReadReply::Value(Some(value)) => Some([b"VALUE ".as_slice(), &value].concat()),
             ReadReply::Rows { rows, more } => {
@@ -359,6 +362,27 @@ fn complete(node: &mut Node, client: &Client) -> Option<Vec<u8>> {
 
 fn leader_hint(node: &Node) -> Vec<u8> {
     format!("NOT_LEADER {}", node.raft.raft.leader_id).into_bytes()
+}
+
+fn metrics(node: &Node) -> Vec<u8> {
+    let raft = &node.raft.raft;
+    let role = match raft.state {
+        StateRole::Follower => "follower",
+        StateRole::Candidate => "candidate",
+        StateRole::PreCandidate => "pre_candidate",
+        StateRole::Leader => "leader",
+    };
+    format!(
+        "METRICS voter_id={}\nrole={role}\nterm={}\nleader_id={}\ncommit_index={}\napplied_index={}\nsnapshot_index={}\nsnapshot_limit_blocked={}\n",
+        raft.id,
+        raft.term,
+        raft.leader_id,
+        raft.raft_log.committed,
+        raft.raft_log.applied,
+        node.raft.store().snapshot_index(),
+        u8::from(node.snapshot_limit_blocked),
+    )
+    .into_bytes()
 }
 
 fn respond(channel: SyncSender<Vec<u8>>, reply: Vec<u8>) {

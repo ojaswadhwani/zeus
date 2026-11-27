@@ -202,6 +202,9 @@ fn linearizable_read_requires_fresh_quorum_and_local_application() {
         cluster.node(1).poll_read(),
         ReadReply::Value(Some(b"old".to_vec()))
     );
+    assert_eq!(cluster.node(1).start_read_barrier(), ReadReply::Pending);
+    assert!(cluster.drive(None).is_none());
+    assert_eq!(cluster.node(1).poll_read(), ReadReply::Confirmed);
 
     cluster.isolated = Some(1);
     cluster.node(2).raft.campaign().unwrap();
@@ -236,7 +239,7 @@ fn linearizable_read_requires_fresh_quorum_and_local_application() {
     // No ticks or higher-term messages have reached the old leader. It still
     // believes it is leader and has a previously confirmed read.
     assert_eq!(cluster.node(1).raft.raft.state, StateRole::Leader);
-    assert_eq!(cluster.node(1).start_read(KEY), ReadReply::Pending);
+    assert_eq!(cluster.node(1).start_read_barrier(), ReadReply::Pending);
     assert!(cluster.drive(None).is_none());
     assert_eq!(cluster.node(1).read.as_ref().unwrap().barrier, None);
     assert_eq!(cluster.node(1).poll_read(), ReadReply::Pending);
@@ -246,6 +249,42 @@ fn linearizable_read_requires_fresh_quorum_and_local_application() {
     assert!(cluster.drive(None).is_none());
     assert_eq!(cluster.node(1).poll_read(), ReadReply::NotLeader);
     assert_eq!(cluster.node(1).start_read(KEY), ReadReply::NotLeader);
+}
+
+#[test]
+fn snapshot_limit_signal_clears_when_compaction_resumes() {
+    let dir = TestDir::new("snapshot-limit");
+    let mut cluster = Cluster {
+        nodes: MEMBERS.map(|id| Some(Node::open(&dir.0, id))),
+        outbound: VecDeque::new(),
+        isolated: None,
+    };
+    cluster.node(1).raft.campaign().unwrap();
+    assert!(cluster.drive(None).is_none());
+    cluster.node(1).maybe_snapshot(1);
+    let first_index = cluster.node(1).raft.store().snapshot_index();
+    assert!(first_index > 0);
+
+    // Populate local state directly to exercise the snapshot size limit.
+    let value = vec![b'x'; zeus::MAX_VALUE_SIZE];
+    for row in 0..(replication::MAX_SNAPSHOT_IMAGE / value.len()) {
+        let key = format!("client/bulk-{row}");
+        cluster.node(1).data.put(key.as_bytes(), &value).unwrap();
+    }
+    cluster.node(1).submit(1, 1, 1, &[(KEY, b"after")]);
+    assert!(cluster.drive(None).is_none());
+    let leader = cluster.node(1);
+    leader.maybe_snapshot(1);
+    assert!(leader.snapshot_limit_blocked);
+    assert_eq!(leader.raft.store().snapshot_index(), first_index);
+
+    leader.data.delete(b"client/bulk-0").unwrap();
+    leader.submit(2, 1, 2, &[(KEY, b"smaller")]);
+    assert!(cluster.drive(None).is_none());
+    let leader = cluster.node(1);
+    leader.maybe_snapshot(1);
+    assert!(!leader.snapshot_limit_blocked);
+    assert!(leader.raft.store().snapshot_index() > first_index);
 }
 
 #[test]

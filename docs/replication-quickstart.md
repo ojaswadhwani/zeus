@@ -1,8 +1,11 @@
 # Run three Zeus voters locally
 
+For builds that include the offline commands, see [Back up and restore a replicated cluster](backup-restore.md).
+For a planned change of voter and client credentials, see [Rotate cluster certificates](certificate-rotation.md).
+
 Build the experimental server on Linux with the pinned Rust toolchain. Use OpenSSL to issue credentials for this local cluster.
 
-If you have the [preview archive](replicated-preview-release.md), verify and extract it, then substitute `zeus_node="$(pwd)/zeus-node"` from inside the extracted directory for the build and binary path lines below.
+If you have the [beta archive](operational-beta-release.md) or [preview archive](replicated-preview-release.md), verify and extract it, then substitute `zeus_node="$(pwd)/zeus-node"` from inside the extracted directory for the build and binary path lines below.
 
 ```sh
 cargo build --locked --features replication --bin zeus-node
@@ -77,3 +80,24 @@ The server accepts one active client operation per leader and gives accepted req
 Every 32 applied Raft entries, a voter attempts to create a snapshot and compact its covered Raft log. The snapshot includes retry state and is bound to the configured voter certificates. Transfers use 64 KiB chunks over mutual TLS. If a connection breaks, the next transfer starts from the first chunk. A voter validates the complete image before recording it on disk and installing it.
 
 The current implementation assembles the image in memory and caps it at 16 MiB. If the next image exceeds that limit, the voter retains its prior snapshot and the Raft log continues to grow.
+
+## Check health and Raft progress
+
+Build a version of `zeus-node` with the health commands and use the same client credentials as for reads and writes.
+
+```sh
+"$zeus_node" live 127.0.0.1:7401 ca.pem client.pem client.key
+"$zeus_node" ready 127.0.0.1:7401 ca.pem client.pem client.key
+"$zeus_node" metrics 127.0.0.1:7401 ca.pem client.pem client.key
+```
+
+`live` prints `OK` when the authenticated request reaches the voter's event loop. It can succeed on an isolated voter. `ready` prints `OK` only after the leader confirms a fresh quorum and applies through the confirmed index. Probe the leader or follow the `NOT_LEADER` hint to another voter. A `BUSY` response means the probe could not enter the active request slot. Retry it on the next polling interval. Both checks exit with status 0 on success, 2 on server rejection, or 1 on a connection or other client error.
+
+`metrics` returns local values as one `key=value` pair per line and works on followers and isolated voters.
+
+| Field | Meaning |
+| --- | --- |
+| `voter_id`, `role`, `term`, `leader_id` | The responding voter and its local view of Raft. A leader ID of 0 means the voter has no known leader. |
+| `commit_index`, `applied_index` | The voter's known commit index and progress applying entries. Compare applied indexes across voters to see catch-up progress. |
+| `snapshot_index` | The latest snapshot created or installed on this voter. A value of 0 means it has no snapshot. |
+| `snapshot_limit_blocked` | A value of 1 means the latest attempted snapshot exceeded the 16 MiB limit. The value clears on successful snapshot creation or installation and starts at 0 after a restart. |

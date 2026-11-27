@@ -144,7 +144,9 @@ fn worker() -> io::Result<()> {
                 ReadReply::Pending => reply.push(0),
                 ReadReply::NotLeader => reply.push(1),
                 ReadReply::Value(None) => reply.push(2),
-                ReadReply::Rows { .. } => panic!("worker requested a point read"),
+                ReadReply::Confirmed | ReadReply::Rows { .. } => {
+                    panic!("worker requested a point read")
+                }
                 ReadReply::Value(Some(value)) => {
                     reply.push(3);
                     reply.extend(value);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0-beta.1
+
+- Added offline backup of a stopped replicated voter and restore into a fresh three-voter cluster. Restores preserve key-value data and certificate-scoped retry records. See the [backup and restore procedure](docs/backup-restore.md).
+- Added authenticated liveness and quorum-backed readiness checks, plus per-voter Raft progress and snapshot metrics.
+- Documented and tested offline rotation of the cluster CA and voter and client certificates.
+- Documented and rehearsed the offline upgrade from `0.2.0-preview`, including rollback from cold copies before candidate writes.
+- Added Linux x86-64 beta packaging with checksums, a Rust dependency inventory, and a hosted signed-provenance gate.
+
 ## 0.2.0-preview (2026-11-27)
 
 - Added the opt-in `zeus-node` server with three fixed voters, automatic elections, mutually authenticated peer connections, and quorum-durable writes.
